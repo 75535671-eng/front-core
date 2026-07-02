@@ -29,12 +29,24 @@ Solo **administrador** o **supervisor** (`usuarios` en Firestore).
 
 Ejemplo: `0404-4@cajacusco.com` + contraseña de Firebase Auth.
 
-## Despliegue
+## Despliegue en Vercel (gratis — recomendado)
+
+1. Importa el repo en https://vercel.com → **Add Project** → `front-core`
+2. Framework: **Other**, sin build command
+3. **Deploy**
+4. Agrega tu dominio `*.vercel.app` en Firebase → **Authentication** → **Authorized domains**
+
+Guía completa: [`docs/VERCEL.md`](docs/VERCEL.md)
+
+## Despliegue alternativo (Firebase Hosting)
 
 ```powershell
 firebase deploy --only hosting --project caja-cusco-ventas
 ```
 
+## Backend API (Render)
+
+Opcional: https://cajacusco-back-core.onrender.com — el panel no lo necesita para leer Firestore.
 ## Relación con otros repos
 
 - App móvil ventas: `cajacusco-fuerza-de-venta`
