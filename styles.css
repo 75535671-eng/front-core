@@ -135,6 +135,17 @@ input:focus {
   box-shadow: 0 0 0 2px rgba(239, 28, 22, 0.25);
 }
 
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--white);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-dark) inset;
+  box-shadow: 0 0 0 1000px var(--surface-dark) inset;
+  border: 1px solid var(--border);
+  caret-color: var(--white);
+  transition: background-color 9999s ease-out;
+}
+
 button,
 .btn {
   display: inline-flex;

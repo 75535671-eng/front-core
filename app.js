@@ -120,7 +120,7 @@ onAuthStateChanged(auth, async (user) => {
       await signOut(auth);
       const rol = normalizeRol(profile);
       loginError.textContent =
-        `Acceso denegado. Su rol es "${rol}". Use 0404-4 (administrador) o 0303-3 (supervisor).`;
+        `Acceso denegado. Su rol efectivo es "${rol}". Se requiere administrador o supervisor.`;
       loginError.classList.remove('hidden');
       loginView.classList.remove('hidden');
       appView.classList.add('hidden');
@@ -168,11 +168,17 @@ function firestoreErrorMessage(err) {
 }
 
 async function loadStaffProfile(uid, email) {
-  const collections = ['asesores_negocio', 'usuarios'];
+  const profiles = await loadAllStaffProfiles(uid, email);
+  return mergeStaffProfiles(profiles);
+}
+
+async function loadAllStaffProfiles(uid, email) {
+  const profiles = [];
+  const collections = ['usuarios', 'asesores_negocio'];
 
   for (const col of collections) {
     const direct = await getDoc(doc(db, col, uid));
-    if (direct.exists()) return direct.data();
+    if (direct.exists()) profiles.push(direct.data());
   }
 
   if (email) {
@@ -180,7 +186,7 @@ async function loadStaffProfile(uid, email) {
       const byEmail = await getDocs(
         query(collection(db, col), where('email', '==', email), limit(1)),
       );
-      if (!byEmail.empty) return byEmail.docs[0].data();
+      if (!byEmail.empty) profiles.push(byEmail.docs[0].data());
     }
   }
 
@@ -188,10 +194,26 @@ async function loadStaffProfile(uid, email) {
     const byUserId = await getDocs(
       query(collection(db, col), where('userId', '==', uid), limit(1)),
     );
-    if (!byUserId.empty) return byUserId.docs[0].data();
+    if (!byUserId.empty) profiles.push(byUserId.docs[0].data());
   }
 
-  return null;
+  return profiles;
+}
+
+function roleRank(profile) {
+  const rol = normalizeRol(profile);
+  if (rol === 'administrador') return 4;
+  if (rol === 'supervisor') return 3;
+  if (rol === 'super_operador') return 2;
+  if (rol === 'operador') return 1;
+  return 0;
+}
+
+function mergeStaffProfiles(profiles) {
+  if (!profiles.length) return null;
+  return profiles.reduce((best, current) =>
+    (roleRank(current) > roleRank(best) ? current : best),
+  );
 }
 
 function normalizeRol(profile) {
