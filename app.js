@@ -8,11 +8,11 @@ import {
 import {
   collection,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
   getFirestore,
   limit,
-  orderBy,
   query,
 } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
@@ -27,6 +27,8 @@ const loginError = document.getElementById('loginError');
 const content = document.getElementById('content');
 const viewTitle = document.getElementById('viewTitle');
 const userChip = document.getElementById('userChip');
+const emailInput = document.getElementById('email');
+const passwordInput = document.getElementById('password');
 
 let currentUser = null;
 let currentView = 'resumen';
@@ -41,16 +43,29 @@ const titles = {
   cartera: 'Cartera diaria',
 };
 
-document.getElementById('loginBtn').addEventListener('click', async () => {
+async function doLogin() {
   loginError.classList.add('hidden');
-  const email = document.getElementById('email').value.trim();
-  const password = document.getElementById('password').value;
+  const email = emailInput.value.trim();
+  const password = passwordInput.value;
+  if (!email || !password) {
+    loginError.textContent = 'Ingrese correo y contraseña.';
+    loginError.classList.remove('hidden');
+    return;
+  }
   try {
     await signInWithEmailAndPassword(auth, email, password);
   } catch (e) {
-    loginError.textContent = 'No se pudo iniciar sesión. Verifique correo y contraseña.';
+    loginError.textContent = authErrorMessage(e);
     loginError.classList.remove('hidden');
   }
+}
+
+document.getElementById('loginBtn').addEventListener('click', doLogin);
+passwordInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doLogin();
+});
+emailInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') passwordInput.focus();
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth));
@@ -72,23 +87,57 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
 
-  const profile = await loadStaffProfile(user.uid);
-  if (!profile || !isAdminOrSupervisor(profile)) {
+  try {
+    const profile = await loadStaffProfile(user.uid);
+    if (!profile || !isAdminOrSupervisor(profile)) {
+      await signOut(auth);
+      loginError.textContent =
+        'Acceso denegado. Solo administrador o supervisor pueden usar el core web.';
+      loginError.classList.remove('hidden');
+      loginView.classList.remove('hidden');
+      appView.classList.add('hidden');
+      return;
+    }
+
+    currentUser = { ...user, profile };
+    const rol = profile.perfil || profile.rol || 'staff';
+    userChip.textContent = `${profile.nombre || user.email} · ${rol}`;
+    loginView.classList.add('hidden');
+    appView.classList.remove('hidden');
+    renderView();
+  } catch (e) {
     await signOut(auth);
-    loginError.textContent =
-      'Acceso denegado. Solo administrador o supervisor pueden usar el core web.';
+    loginError.textContent = firestoreErrorMessage(e);
     loginError.classList.remove('hidden');
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
-    return;
   }
-
-  currentUser = { ...user, profile };
-  userChip.textContent = `${profile.nombre || user.email} · ${profile.rol || profile.perfil}`;
-  loginView.classList.add('hidden');
-  appView.classList.remove('hidden');
-  renderView();
 });
+
+function authErrorMessage(err) {
+  const code = err?.code || '';
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
+    return 'Correo o contraseña incorrectos.';
+  }
+  if (code === 'auth/user-not-found') {
+    return 'Usuario no registrado en Firebase Auth.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Demasiados intentos. Espere un momento e intente de nuevo.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Sin conexión. Verifique su red e intente de nuevo.';
+  }
+  return 'No se pudo iniciar sesión. Verifique correo y contraseña.';
+}
+
+function firestoreErrorMessage(err) {
+  const code = err?.code || '';
+  if (code === 'permission-denied') {
+    return 'Sin permiso para leer el perfil. Despliegue firestore.rules o use cuenta admin/supervisor.';
+  }
+  return `Error al validar acceso: ${err.message || 'desconocido'}`;
+}
 
 async function loadStaffProfile(uid) {
   const userDoc = await getDoc(doc(db, 'usuarios', uid));
@@ -116,10 +165,23 @@ function money(n) {
   return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(Number(n));
 }
 
+function formatDate(value) {
+  if (!value) return '—';
+  if (typeof value === 'string') return value;
+  if (value.toDate) {
+    return value.toDate().toISOString().slice(0, 10);
+  }
+  return String(value);
+}
+
 function esc(text) {
   const d = document.createElement('div');
   d.textContent = text ?? '';
   return d.innerHTML;
+}
+
+function emptyPanel(message) {
+  return `<div class="panel"><p class="empty-state">${esc(message)}</p></div>`;
 }
 
 async function renderView() {
@@ -144,22 +206,22 @@ async function renderView() {
         await renderPortal();
         break;
       case 'usuarios':
-        await renderTable('usuarios', ['codigoEmpleado', 'nombre', 'email', 'rol', 'estado']);
+        await renderUsuarios();
         break;
       case 'cartera':
         await renderCartera();
         break;
       default:
-        content.innerHTML = '<p>Vista no disponible.</p>';
+        content.innerHTML = emptyPanel('Vista no disponible.');
     }
   } catch (e) {
-    content.innerHTML = `<p class="error">Error al cargar datos: ${esc(e.message)}</p>`;
+    content.innerHTML = `<p class="error">${esc(firestoreErrorMessage(e))}</p>`;
   }
 }
 
 async function countCollection(name) {
-  const snap = await getDocs(query(collection(db, name), limit(500)));
-  return snap.size;
+  const snap = await getCountFromServer(collection(db, name));
+  return snap.data().count;
 }
 
 async function renderResumen() {
@@ -202,6 +264,11 @@ async function renderTable(colName, fields) {
   const snap = await getDocs(query(collection(db, colName), limit(100)));
   const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
+  if (rows.length === 0) {
+    content.innerHTML = emptyPanel(`No hay registros en ${colName}.`);
+    return;
+  }
+
   content.innerHTML = `
     <p class="section-note">Mostrando hasta 100 registros de <code>${colName}</code>.</p>
     <div class="panel">
@@ -221,9 +288,46 @@ async function renderTable(colName, fields) {
     </div>`;
 }
 
+async function renderUsuarios() {
+  const snap = await getDocs(query(collection(db, 'usuarios'), limit(100)));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  if (rows.length === 0) {
+    content.innerHTML = emptyPanel('No hay usuarios. Ejecute seed_auth.mjs en back-core.');
+    return;
+  }
+
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-header"><h3>Usuarios — Fuerza de Ventas</h3><span>${rows.length} registros</span></div>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr><th>Código</th><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th></tr>
+          </thead>
+          <tbody>
+            ${rows.map((r) => `
+              <tr>
+                <td>${esc(r.codigoEmpleado || r.codigo || '—')}</td>
+                <td>${esc(r.nombre || '—')}</td>
+                <td>${esc(r.email || '—')}</td>
+                <td><span class="badge neutral">${esc(r.perfil || r.rol || '—')}</span></td>
+                <td>${esc(r.estado || '—')}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 async function renderSolicitudes() {
   const snap = await getDocs(query(collection(db, 'solicitudes_credito'), limit(100)));
   const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  if (rows.length === 0) {
+    content.innerHTML = emptyPanel('No hay solicitudes de crédito.');
+    return;
+  }
 
   content.innerHTML = `
     <div class="panel">
@@ -257,6 +361,11 @@ async function renderCreditos() {
   const snap = await getDocs(query(collection(db, 'creditos'), limit(100)));
   const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
+  if (rows.length === 0) {
+    content.innerHTML = emptyPanel('No hay créditos desembolsados.');
+    return;
+  }
+
   content.innerHTML = `
     <div class="panel">
       <div class="panel-header"><h3>Créditos desembolsados</h3><span>${rows.length} registros</span></div>
@@ -276,7 +385,7 @@ async function renderCreditos() {
                 <td>${money(r.montoDesembolsado)}</td>
                 <td>${money(r.saldoActual)}</td>
                 <td>${money(r.cuotaMensual)}</td>
-                <td><span class="badge ok">${esc(r.estado)}</span></td>
+                <td><span class="badge ${badgeForEstado(r.estado)}">${esc(r.estado)}</span></td>
                 <td>${esc(r.casoAcademico ? `#${r.casoAcademico}` : '—')}</td>
               </tr>`).join('')}
           </tbody>
@@ -286,22 +395,22 @@ async function renderCreditos() {
 }
 
 async function renderPortal() {
-  const [cuentasSnap, clientesSnap] = await Promise.all([
+  const [cuentasSnap, clientesCount] = await Promise.all([
     getDocs(query(collection(db, 'cuentas_clientes'), limit(100))),
-    getDocs(query(collection(db, 'clientes'), limit(100))),
+    countCollection('clientes'),
   ]);
 
   const cuentas = cuentasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const clientesConPortal = new Set(cuentas.map((c) => c.clienteId));
-  const clientesTotal = clientesSnap.size;
-  const sinPortal = clientesTotal - clientesConPortal.size;
+  const clientesConPortal = new Set(cuentas.map((c) => c.clienteId).filter(Boolean));
+  const sinPortal = Math.max(clientesCount - clientesConPortal.size, 0);
 
   content.innerHTML = `
     <div class="stats">
       <div class="stat-card"><div class="label">Cuentas activas</div><div class="value">${cuentas.length}</div></div>
       <div class="stat-card"><div class="label">Clientes con portal</div><div class="value">${clientesConPortal.size}</div></div>
-      <div class="stat-card"><div class="label">Sin acceso portal</div><div class="value">${Math.max(sinPortal, 0)}</div></div>
+      <div class="stat-card"><div class="label">Sin acceso portal</div><div class="value">${sinPortal}</div></div>
     </div>
+    ${cuentas.length === 0 ? emptyPanel('No hay cuentas del portal registradas.') : `
     <div class="panel">
       <div class="panel-header"><h3>Cuentas Portal Cliente</h3></div>
       <div style="overflow:auto">
@@ -310,22 +419,28 @@ async function renderPortal() {
           <tbody>
             ${cuentas.map((c) => `
               <tr>
-                <td>${esc(c.numeroDocumento)}</td>
-                <td><code>${esc(c.clienteId)}</code></td>
-                <td><span class="badge ${c.activo ? 'ok' : 'bad'}">${c.activo ? 'Sí' : 'No'}</span></td>
-                <td><code>${esc((c.authUid || c.id).slice(0, 12))}…</code></td>
+                <td>${esc(c.numeroDocumento || c.dni || '—')}</td>
+                <td><code>${esc(c.clienteId || '—')}</code></td>
+                <td><span class="badge ${c.activo !== false ? 'ok' : 'bad'}">${c.activo !== false ? 'Sí' : 'No'}</span></td>
+                <td><code>${esc(String(c.authUid || c.id).slice(0, 12))}…</code></td>
               </tr>`).join('')}
           </tbody>
         </table>
       </div>
-    </div>`;
+    </div>`}`;
 }
 
 async function renderCartera() {
-  const snap = await getDocs(
-    query(collection(db, 'cartera_diaria'), orderBy('fechaAsignacion', 'desc'), limit(80)),
-  );
-  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const snap = await getDocs(query(collection(db, 'cartera_diaria'), limit(100)));
+  const rows = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => String(b.fechaAsignacion || '').localeCompare(String(a.fechaAsignacion || '')))
+    .slice(0, 80);
+
+  if (rows.length === 0) {
+    content.innerHTML = emptyPanel('No hay registros de cartera diaria.');
+    return;
+  }
 
   content.innerHTML = `
     <div class="panel">
@@ -341,11 +456,11 @@ async function renderCartera() {
           <tbody>
             ${rows.map((r) => `
               <tr>
-                <td>${esc(r.fechaAsignacion)}</td>
-                <td>${esc(r.nombreCliente)}</td>
-                <td>${esc(r.documento)}</td>
-                <td>${esc(r.tipoGestion)}</td>
-                <td>${esc(r.prioridad)}</td>
+                <td>${esc(formatDate(r.fechaAsignacion))}</td>
+                <td>${esc(r.nombreCliente || '—')}</td>
+                <td>${esc(r.documento || '—')}</td>
+                <td>${esc(r.tipoGestion || '—')}</td>
+                <td>${esc(r.prioridad || '—')}</td>
                 <td><span class="badge ${r.visitado ? 'ok' : 'warn'}">${r.visitado ? 'Sí' : 'No'}</span></td>
               </tr>`).join('')}
           </tbody>

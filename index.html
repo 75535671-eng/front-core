@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#EF1C16" />
   <title>Core Admin — Caja Cusco</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -22,7 +23,7 @@
 
   <div id="appView" class="app-shell hidden">
     <aside class="sidebar">
-      <div class="brand">Caja Cusco</div>
+      <div class="sidebar-brand-bar"><span>Caja Cusco</span></div>
       <div class="brand-sub">Core administrativo</div>
       <button class="nav-btn active" data-view="resumen">Resumen</button>
       <button class="nav-btn" data-view="clientes">Clientes</button>
@@ -39,7 +40,7 @@
         <h2 id="viewTitle">Resumen</h2>
         <div class="user-chip" id="userChip"></div>
       </div>
-      <div id="content"></div>
+      <div class="main-body" id="content"></div>
     </main>
   </div>
 
