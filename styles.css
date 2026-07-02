@@ -117,7 +117,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   padding: 14px 16px;
   margin-bottom: 16px;
@@ -127,6 +128,12 @@ select {
   color: var(--text);
   font-size: 1rem;
   transition: border-color 0.15s ease;
+  font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 88px;
 }
 
 input:focus {
@@ -426,6 +433,88 @@ code {
 .section-note em {
   color: var(--corporate-yellow);
   font-style: normal;
+}
+
+.action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-sm {
+  min-height: auto;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--white);
+}
+
+.btn-sm.ok {
+  background: var(--success);
+}
+
+.btn-sm.warn {
+  background: #b8860b;
+}
+
+.btn-sm.bad {
+  background: var(--error-red);
+}
+
+.muted-text {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.modal-card {
+  position: relative;
+  z-index: 1;
+  width: min(460px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+.modal-card h3 {
+  margin: 0 0 8px;
+}
+
+.modal-sub {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.modal-actions button {
+  min-height: 44px;
+  padding: 10px 16px;
 }
 
 @media (max-width: 900px) {

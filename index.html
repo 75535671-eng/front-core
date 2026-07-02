@@ -48,6 +48,20 @@
     </main>
   </div>
 
-  <script type="module" src="app.js?v=3"></script>
+  <div id="actionModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card" role="dialog" aria-labelledby="modalTitle">
+      <h3 id="modalTitle">Acción</h3>
+      <p id="modalSubtitle" class="modal-sub"></p>
+      <div id="modalFields"></div>
+      <div id="modalError" class="error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-close-modal>Cancelar</button>
+        <button type="button" id="modalConfirmBtn">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js?v=4"></script>
 </body>
 </html>

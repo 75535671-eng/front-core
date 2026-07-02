@@ -14,6 +14,9 @@ import {
   getFirestore,
   limit,
   query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
 } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -32,6 +35,48 @@ const passwordInput = document.getElementById('password');
 
 let currentUser = null;
 let currentView = 'resumen';
+let solicitudesCache = [];
+let modalResolver = null;
+
+const actionModal = document.getElementById('actionModal');
+const modalTitle = document.getElementById('modalTitle');
+const modalSubtitle = document.getElementById('modalSubtitle');
+const modalFields = document.getElementById('modalFields');
+const modalError = document.getElementById('modalError');
+const modalConfirmBtn = document.getElementById('modalConfirmBtn');
+
+document.querySelectorAll('[data-close-modal]').forEach((el) => {
+  el.addEventListener('click', closeModal);
+});
+
+modalConfirmBtn.addEventListener('click', async () => {
+  if (!modalResolver) return;
+  modalError.classList.add('hidden');
+  modalConfirmBtn.disabled = true;
+  try {
+    await modalResolver();
+    closeModal();
+    if (currentView === 'solicitudes') await renderSolicitudes();
+  } catch (e) {
+    modalError.textContent = firestoreErrorMessage(e);
+    modalError.classList.remove('hidden');
+  } finally {
+    modalConfirmBtn.disabled = false;
+  }
+});
+
+content.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-solicitud-action]');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const action = btn.dataset.solicitudAction;
+  const row = solicitudesCache.find((r) => r.id === id);
+  if (!row) return;
+  if (action === 'aprobar') await handleAprobar(row);
+  if (action === 'condicionar') await handleCondicionar(row);
+  if (action === 'rechazar') await handleRechazar(row);
+  if (action === 'desembolsar') await handleDesembolsar(row);
+});
 
 const titles = {
   resumen: 'Resumen',
@@ -191,6 +236,226 @@ function isProfileActive(profile) {
 function isAdminOrSupervisor(profile) {
   const rol = normalizeRol(profile);
   return rol === 'administrador' || rol === 'supervisor';
+}
+
+function normalizeEstado(estado) {
+  return (estado || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s/g, '_');
+}
+
+function isSolicitudPendiente(estado) {
+  const e = normalizeEstado(estado);
+  return ['enviado', 'en_evaluacion', 'recibido_comite', 'borrador', 'pendiente'].includes(e);
+}
+
+function isSolicitudAprobada(estado) {
+  const e = normalizeEstado(estado);
+  return e === 'aprobado';
+}
+
+function isSolicitudFinal(estado) {
+  const e = normalizeEstado(estado);
+  return ['desembolsado', 'rechazado', 'condicionado'].includes(e);
+}
+
+function renderSolicitudAcciones(row) {
+  if (isSolicitudFinal(row.estado)) {
+    return '<span class="muted-text">—</span>';
+  }
+  const parts = [];
+  if (isSolicitudPendiente(row.estado)) {
+    parts.push(
+      `<button type="button" class="btn-sm ok" data-solicitud-action="aprobar" data-id="${esc(row.id)}">Aprobar</button>`,
+      `<button type="button" class="btn-sm warn" data-solicitud-action="condicionar" data-id="${esc(row.id)}">Condicionar</button>`,
+      `<button type="button" class="btn-sm bad" data-solicitud-action="rechazar" data-id="${esc(row.id)}">Rechazar</button>`,
+    );
+  }
+  if (isSolicitudAprobada(row.estado)) {
+    parts.push(
+      `<button type="button" class="btn-sm ok" data-solicitud-action="desembolsar" data-id="${esc(row.id)}">Desembolsar</button>`,
+    );
+  }
+  if (parts.length === 0) {
+    return '<span class="muted-text">Sin acciones</span>';
+  }
+  return `<div class="action-group">${parts.join('')}</div>`;
+}
+
+function closeModal() {
+  actionModal.classList.add('hidden');
+  actionModal.setAttribute('aria-hidden', 'true');
+  modalResolver = null;
+  modalFields.innerHTML = '';
+  modalError.classList.add('hidden');
+}
+
+function openModal({ title, subtitle, fieldsHtml, onConfirm }) {
+  modalTitle.textContent = title;
+  modalSubtitle.textContent = subtitle || '';
+  modalFields.innerHTML = fieldsHtml || '';
+  modalError.classList.add('hidden');
+  modalResolver = onConfirm;
+  actionModal.classList.remove('hidden');
+  actionModal.setAttribute('aria-hidden', 'false');
+  const firstInput = modalFields.querySelector('input, textarea, select');
+  if (firstInput) firstInput.focus();
+}
+
+function readModalField(id) {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : '';
+}
+
+function hoyIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function handleAprobar(row) {
+  const montoDefault = row.montoSolicitado ?? row.monto ?? '';
+  openModal({
+    title: 'Aprobar solicitud',
+    subtitle: `${row.numeroExpediente || row.id} — ${row.nombres || ''} ${row.apellidos || ''}`.trim(),
+    fieldsHtml: `
+      <label for="montoAprobado">Monto aprobado (PEN)</label>
+      <input id="montoAprobado" type="number" min="1" step="0.01" value="${esc(String(montoDefault))}" />
+    `,
+    onConfirm: async () => {
+      const monto = Number(readModalField('montoAprobado'));
+      if (!monto || monto <= 0) throw new Error('Ingrese un monto aprobado válido.');
+      await updateDoc(doc(db, 'solicitudes_credito', row.id), {
+        estado: 'aprobado',
+        montoAprobado: monto,
+        evaluadoPor: currentUser.uid,
+        evaluadoPorNombre: currentUser.profile?.nombre || currentUser.email,
+        evaluadoAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    },
+  });
+}
+
+async function handleCondicionar(row) {
+  const montoDefault = Math.round(Number(row.montoSolicitado || row.monto || 0) * 0.8) || '';
+  openModal({
+    title: 'Condicionar solicitud',
+    subtitle: row.numeroExpediente || row.id,
+    fieldsHtml: `
+      <label for="montoCond">Monto aprobado condicionado (PEN)</label>
+      <input id="montoCond" type="number" min="1" step="0.01" value="${esc(String(montoDefault))}" />
+      <label for="condicionTxt">Condición / observación</label>
+      <textarea id="condicionTxt" rows="3" placeholder="Ej.: Presentar garantía adicional"></textarea>
+    `,
+    onConfirm: async () => {
+      const monto = Number(readModalField('montoCond'));
+      const condicion = readModalField('condicionTxt');
+      if (!monto || monto <= 0) throw new Error('Ingrese un monto válido.');
+      if (!condicion) throw new Error('Indique la condición.');
+      await updateDoc(doc(db, 'solicitudes_credito', row.id), {
+        estado: 'condicionado',
+        montoAprobado: monto,
+        condicionAdicional: condicion,
+        evaluadoPor: currentUser.uid,
+        evaluadoPorNombre: currentUser.profile?.nombre || currentUser.email,
+        evaluadoAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    },
+  });
+}
+
+async function handleRechazar(row) {
+  openModal({
+    title: 'Rechazar solicitud',
+    subtitle: row.numeroExpediente || row.id,
+    fieldsHtml: `
+      <label for="motivoRechazo">Motivo de rechazo</label>
+      <textarea id="motivoRechazo" rows="3" placeholder="Ej.: Capacidad de pago insuficiente"></textarea>
+    `,
+    onConfirm: async () => {
+      const motivo = readModalField('motivoRechazo');
+      if (!motivo) throw new Error('Indique el motivo de rechazo.');
+      await updateDoc(doc(db, 'solicitudes_credito', row.id), {
+        estado: 'rechazado',
+        montoAprobado: null,
+        motivoRechazo: motivo,
+        evaluadoPor: currentUser.uid,
+        evaluadoPorNombre: currentUser.profile?.nombre || currentUser.email,
+        evaluadoAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    },
+  });
+}
+
+function calcCuotaMensual(monto, plazo, teaPct) {
+  const tea = Number(teaPct || 36) / 100;
+  const r = (1 + tea) ** (1 / 12) - 1;
+  if (!plazo || plazo <= 0) return monto;
+  if (r === 0) return monto / plazo;
+  return (monto * r * (1 + r) ** plazo) / ((1 + r) ** plazo - 1);
+}
+
+async function handleDesembolsar(row) {
+  const monto = row.montoAprobado ?? row.montoSolicitado ?? row.monto;
+  openModal({
+    title: 'Desembolsar crédito',
+    subtitle: `${row.numeroExpediente || row.id} — ${money(monto)}`,
+    fieldsHtml: `
+      <p class="section-note" style="margin-bottom:12px">
+        Se registrará el crédito en Firestore y la solicitud pasará a <strong>desembolsado</strong>.
+      </p>
+      <label for="fechaDesembolso">Fecha de desembolso</label>
+      <input id="fechaDesembolso" type="date" value="${hoyIso()}" />
+    `,
+    onConfirm: async () => {
+      const fecha = readModalField('fechaDesembolso') || hoyIso();
+      const montoNum = Number(monto);
+      const plazo = Number(row.plazoMeses || row.plazo || 12);
+      const tea = Number(row.teaReferencial || row.tea || 36);
+      const cuota = Math.round(calcCuotaMensual(montoNum, plazo, tea) * 100) / 100;
+      const creditoId = row.creditoId || `credito_${row.id}`;
+
+      await setDoc(
+        doc(db, 'creditos', creditoId),
+        {
+          clienteId: row.clienteId,
+          solicitudId: row.id,
+          asesorId: row.asesorId,
+          agenciaId: row.agenciaId || 'AG001',
+          producto: row.producto || 'Crédito Empresarial',
+          montoDesembolsado: montoNum,
+          plazoMeses: plazo,
+          tea,
+          estado: 'vigente',
+          fechaDesembolso: fecha,
+          saldoActual: montoNum,
+          cuotasTotal: plazo,
+          cuotasPagadas: 0,
+          diasMora: 0,
+          cuotaMensual: cuota,
+          diaPago: row.diaPago || 5,
+          origen: 'core_admin',
+          desembolsadoPor: currentUser.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      await updateDoc(doc(db, 'solicitudes_credito', row.id), {
+        estado: 'desembolsado',
+        montoAprobado: montoNum,
+        fechaDesembolso: fecha,
+        creditoId,
+        desembolsadoPor: currentUser.uid,
+        desembolsadoAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    },
+  });
 }
 
 function badgeForEstado(estado) {
@@ -364,13 +629,22 @@ async function renderUsuarios() {
 async function renderSolicitudes() {
   const snap = await getDocs(query(collection(db, 'solicitudes_credito'), limit(100)));
   const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  solicitudesCache = rows;
 
   if (rows.length === 0) {
     content.innerHTML = emptyPanel('No hay solicitudes de crédito.');
     return;
   }
 
+  const pendientes = rows.filter((r) => isSolicitudPendiente(r.estado)).length;
+  const aprobadas = rows.filter((r) => isSolicitudAprobada(r.estado)).length;
+
   content.innerHTML = `
+    <p class="section-note">
+      Evalúe solicitudes desde el core: <strong>Aprobar</strong>, <strong>Condicionar</strong>,
+      <strong>Rechazar</strong> o <strong>Desembolsar</strong> (si ya está aprobada).
+      Pendientes: ${pendientes} · Aprobadas sin desembolsar: ${aprobadas}
+    </p>
     <div class="panel">
       <div class="panel-header"><h3>Solicitudes</h3><span>${rows.length} registros</span></div>
       <div style="overflow:auto">
@@ -378,7 +652,7 @@ async function renderSolicitudes() {
           <thead>
             <tr>
               <th>Expediente</th><th>Cliente</th><th>Monto</th><th>Plazo</th>
-              <th>Estado</th><th>Aprobado</th><th>Origen</th>
+              <th>Estado</th><th>Aprobado</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -390,7 +664,7 @@ async function renderSolicitudes() {
                 <td>${esc(r.plazoMeses)} m</td>
                 <td><span class="badge ${badgeForEstado(r.estado)}">${esc(r.estado)}</span></td>
                 <td>${money(r.montoAprobado)}</td>
-                <td>${esc(r.casoAcademico ? `Caso ${r.casoAcademico}` : r.canalOrigen || 'ventas')}</td>
+                <td>${renderSolicitudAcciones(r)}</td>
               </tr>`).join('')}
           </tbody>
         </table>
