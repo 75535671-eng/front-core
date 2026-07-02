@@ -96,7 +96,7 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   try {
-    const profile = await loadStaffProfile(user.uid, user.email);
+    const profile = await loadStaffProfile(user.uid);
     if (!profile) {
       await signOut(auth);
       loginError.textContent =
@@ -120,7 +120,7 @@ onAuthStateChanged(auth, async (user) => {
       await signOut(auth);
       const rol = normalizeRol(profile);
       loginError.textContent =
-        `Acceso denegado. Su rol efectivo es "${rol}". Se requiere administrador o supervisor.`;
+        `Acceso denegado. En usuarios/${user.uid.slice(0, 8)}… su rol es "${rol}". Solo administrador o supervisor.`;
       loginError.classList.remove('hidden');
       loginView.classList.remove('hidden');
       appView.classList.add('hidden');
@@ -167,23 +167,10 @@ function firestoreErrorMessage(err) {
   return `Error al validar acceso: ${err.message || 'desconocido'}`;
 }
 
-async function loadStaffProfile(uid, email) {
-  const direct = await getDoc(doc(db, 'usuarios', uid));
-  if (direct.exists()) return direct.data();
-
-  if (email) {
-    const byEmail = await getDocs(
-      query(collection(db, 'usuarios'), where('email', '==', email), limit(1)),
-    );
-    if (!byEmail.empty) return byEmail.docs[0].data();
-  }
-
-  const byUserId = await getDocs(
-    query(collection(db, 'usuarios'), where('userId', '==', uid), limit(1)),
-  );
-  if (!byUserId.empty) return byUserId.docs[0].data();
-
-  return null;
+async function loadStaffProfile(uid) {
+  const snap = await getDoc(doc(db, 'usuarios', uid));
+  if (!snap.exists()) return null;
+  return snap.data();
 }
 
 function normalizeRol(profile) {
