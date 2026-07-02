@@ -98,6 +98,17 @@ body {
   line-height: 1.5;
 }
 
+.login-hint {
+  margin: 16px 0 0 !important;
+  font-size: 0.82rem !important;
+  line-height: 1.45 !important;
+  color: var(--text-muted) !important;
+}
+
+.login-hint strong {
+  color: var(--corporate-yellow);
+}
+
 label {
   display: block;
   margin-bottom: 6px;

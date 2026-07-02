@@ -14,6 +14,7 @@ import {
   getFirestore,
   limit,
   query,
+  where,
 } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -45,10 +46,10 @@ const titles = {
 
 async function doLogin() {
   loginError.classList.add('hidden');
-  const email = emailInput.value.trim();
+  const email = toInstitutionalEmail(emailInput.value);
   const password = passwordInput.value;
   if (!email || !password) {
-    loginError.textContent = 'Ingrese correo y contraseña.';
+    loginError.textContent = 'Ingrese código/correo y contraseña.';
     loginError.classList.remove('hidden');
     return;
   }
@@ -58,6 +59,13 @@ async function doLogin() {
     loginError.textContent = authErrorMessage(e);
     loginError.classList.remove('hidden');
   }
+}
+
+function toInstitutionalEmail(value) {
+  const v = value.trim();
+  if (!v) return '';
+  if (v.includes('@')) return v.toLowerCase();
+  return `${v.toLowerCase()}@cajacusco.com`;
 }
 
 document.getElementById('loginBtn').addEventListener('click', doLogin);
@@ -88,11 +96,31 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   try {
-    const profile = await loadStaffProfile(user.uid);
-    if (!profile || !isAdminOrSupervisor(profile)) {
+    const profile = await loadStaffProfile(user.uid, user.email);
+    if (!profile) {
       await signOut(auth);
       loginError.textContent =
-        'Acceso denegado. Solo administrador o supervisor pueden usar el core web.';
+        'Autenticación correcta, pero falta el perfil en Firestore. Ejecute scripts/seed_auth.mjs en back-core.';
+      loginError.classList.remove('hidden');
+      loginView.classList.remove('hidden');
+      appView.classList.add('hidden');
+      return;
+    }
+
+    if (!isProfileActive(profile)) {
+      await signOut(auth);
+      loginError.textContent = 'Su cuenta no está activa. Contacte al administrador.';
+      loginError.classList.remove('hidden');
+      loginView.classList.remove('hidden');
+      appView.classList.add('hidden');
+      return;
+    }
+
+    if (!isAdminOrSupervisor(profile)) {
+      await signOut(auth);
+      const rol = normalizeRol(profile);
+      loginError.textContent =
+        `Acceso denegado. Su rol es "${rol}". Use 0404-4 (administrador) o 0303-3 (supervisor).`;
       loginError.classList.remove('hidden');
       loginView.classList.remove('hidden');
       appView.classList.add('hidden');
@@ -139,16 +167,51 @@ function firestoreErrorMessage(err) {
   return `Error al validar acceso: ${err.message || 'desconocido'}`;
 }
 
-async function loadStaffProfile(uid) {
-  const userDoc = await getDoc(doc(db, 'usuarios', uid));
-  if (userDoc.exists()) return userDoc.data();
-  const asesorDoc = await getDoc(doc(db, 'asesores_negocio', uid));
-  if (asesorDoc.exists()) return asesorDoc.data();
+async function loadStaffProfile(uid, email) {
+  const collections = ['asesores_negocio', 'usuarios'];
+
+  for (const col of collections) {
+    const direct = await getDoc(doc(db, col, uid));
+    if (direct.exists()) return direct.data();
+  }
+
+  if (email) {
+    for (const col of collections) {
+      const byEmail = await getDocs(
+        query(collection(db, col), where('email', '==', email), limit(1)),
+      );
+      if (!byEmail.empty) return byEmail.docs[0].data();
+    }
+  }
+
+  for (const col of collections) {
+    const byUserId = await getDocs(
+      query(collection(db, col), where('userId', '==', uid), limit(1)),
+    );
+    if (!byUserId.empty) return byUserId.docs[0].data();
+  }
+
   return null;
 }
 
+function normalizeRol(profile) {
+  const raw = (profile.perfil || profile.rol || 'operador')
+    .toString()
+    .toLowerCase()
+    .replace(/\s/g, '');
+  if (raw === 'admin') return 'administrador';
+  if (raw === 'superoperador') return 'super_operador';
+  return raw;
+}
+
+function isProfileActive(profile) {
+  if (profile.activo === false) return false;
+  const estado = (profile.estado || 'activo').toString().toLowerCase();
+  return estado === 'activo';
+}
+
 function isAdminOrSupervisor(profile) {
-  const rol = (profile.perfil || profile.rol || '').toString();
+  const rol = normalizeRol(profile);
   return rol === 'administrador' || rol === 'supervisor';
 }
 
